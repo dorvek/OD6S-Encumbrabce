@@ -9,9 +9,11 @@
     }
   ],
   "compatibility": {
-    "minimum": "12",
-    "verified": "13"
+    "minimum": "11",
+    "verified": "11"
   },
+  "manifest": "https://raw.githubusercontent.com/dorvek/OD6S-Encumbrabce/main/od6s-encumbrance/module.json",
+  "download": "https://github.com/dorvek/OD6S-Encumbrabce/archive/refs/heads/main.zip",
   "esmodules": ["main.js"],
   "styles": ["styles/module.css"],
   "languages": [
