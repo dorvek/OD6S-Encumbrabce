@@ -1,0 +1,24 @@
+{
+  "id": "od6s-encumbrance",
+  "title": "OD6S Encumbrance Tracker",
+  "description": "Adds carry limit and encumbrance tracking for Star Wars D6 (OD6S). Automatically calculates carry limit from Strength die code (e.g. 3D+1). Counts all inventory items — not just backpack slots. Displays a weight bar on the character sheet and warns when over the limit. The limit can be overridden per character.",
+  "version": "1.1.0",
+  "authors": [
+    {
+      "name": "Custom Module"
+    }
+  ],
+  "compatibility": {
+    "minimum": "12",
+    "verified": "13"
+  },
+  "esmodules": ["main.js"],
+  "styles": ["styles/module.css"],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "languages/en.json"
+    }
+  ]
+}

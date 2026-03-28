@@ -1,0 +1,72 @@
+/* OD6S Encumbrance Tracker ----------------------------------------- */
+
+.enc-tracker {
+  margin: 6px 8px 4px 8px;
+  padding: 5px 7px 7px 7px;
+  border: 1px solid rgba(120, 100, 60, 0.4);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.enc-tracker.enc-over {
+  border-color: rgba(170, 30, 30, 0.65);
+  background: rgba(170, 30, 30, 0.07);
+}
+
+/* Label row */
+.enc-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  color: #3a2c1a;
+}
+
+.enc-text {
+  flex: 1;
+}
+
+.enc-tracker.enc-over .enc-label {
+  color: #7a1515;
+  font-weight: bold;
+}
+
+/* Pencil / clear buttons */
+.enc-edit,
+.enc-clear {
+  cursor: pointer;
+  opacity: 0.45;
+  font-size: 11px;
+  padding: 0 3px;
+  border: none;
+  background: none;
+  color: inherit;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.enc-edit:hover  { opacity: 1; color: #c8a020; }
+.enc-clear:hover { opacity: 1; color: #aa2020; }
+
+/* Bar */
+.enc-bar-bg {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+.enc-bar-fill {
+  height: 100%;
+  background: linear-gradient(to right, #5a9a5a, #c8a020);
+  border-radius: 4px;
+  transition: width 0.25s ease;
+  min-width: 2px;
+}
+
+.enc-bar-fill.enc-over {
+  background: linear-gradient(to right, #c02020, #7a0000);
+}
