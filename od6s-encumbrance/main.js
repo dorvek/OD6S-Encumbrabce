@@ -1,10 +1,10 @@
 /**
- * OD6S Encumbrance Tracker v1.3
+ * OD6S Encumbrance Tracker v1.4
  *
- * - Weapons count as 1 slot (toggleable)
- * - Armour counts as 1 slot (toggleable)
- * - Gear/equipment counts as 0.5 slots (toggleable, and the half-slot value is configurable)
- * - Carry limit = STR dice × multiplier, overridable per character
+ * Per-category slot costs (weapons, armour, gear each configurable).
+ * Optional scale multiplier — higher scale items take more slots.
+ * Carry limit = STR dice × multiplier, overridable per character.
+ * Edit/clear buttons visible to GM only.
  */
 
 const MODULE_ID = "od6s-encumbrance";
@@ -52,9 +52,7 @@ function getStrengthDice(actor) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Item type classification
-// OD6S item types: "weapon", "armor", "equipment" (gear),
-// plus passive types we always ignore.
+// Item types we always ignore (passives, abilities, etc.)
 // ─────────────────────────────────────────────────────────────────
 const ALWAYS_IGNORED = new Set([
   "ability", "advantage", "disadvantage", "special", "specialability",
@@ -62,32 +60,56 @@ const ALWAYS_IGNORED = new Set([
   "species", "career", "extranormal", "manifestation"
 ]);
 
-// Returns the slot cost for a single item based on current settings,
-// or 0 if the item should not be counted.
+// ─────────────────────────────────────────────────────────────────
+// Scale multiplier
+// Scale 0 = character scale → ×1
+// Scale 1 = speeder/walker  → ×2
+// Scale 2 = starfighter     → ×3
+// etc.
+// Only applied when the "use scale" setting is on.
+// ─────────────────────────────────────────────────────────────────
+function scaleMultiplier(item) {
+  if (!game.settings.get(MODULE_ID, "useScale")) return 1;
+
+  const scale = parseInt(
+    item.system?.scale?.score ?? item.system?.scale ?? item.system?.itemscale ?? 0,
+    10
+  );
+  if (isNaN(scale)) return 1;
+
+  // Look up the configured multiplier for this scale level (capped at scale 4)
+  const key = `scaleMultiplier${Math.min(scale, 4)}`;
+  return game.settings.get(MODULE_ID, key) ?? 1;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Slot cost for a single item
+// ─────────────────────────────────────────────────────────────────
 function slotCostForItem(item) {
   const type = (item.type ?? "").toLowerCase();
 
   if (ALWAYS_IGNORED.has(type)) return 0;
 
-  // Weapons
+  let baseCost = 0;
+
   if (type === "weapon" || type === "rangedweapon" || type === "meleeweapon") {
-    return game.settings.get(MODULE_ID, "countWeapons") ? 1 : 0;
-  }
+    if (!game.settings.get(MODULE_ID, "countWeapons")) return 0;
+    baseCost = game.settings.get(MODULE_ID, "weaponSlotCost");
 
-  // Armour
-  if (type === "armor" || type === "armour") {
-    return game.settings.get(MODULE_ID, "countArmor") ? 1 : 0;
-  }
+  } else if (type === "armor" || type === "armour") {
+    if (!game.settings.get(MODULE_ID, "countArmor")) return 0;
+    baseCost = game.settings.get(MODULE_ID, "armorSlotCost");
 
-  // Gear / equipment — counts as a configurable fraction (default 0.5)
-  if (type === "equipment" || type === "gear" || type === "item" || type === "misc") {
+  } else if (type === "equipment" || type === "gear" || type === "item" || type === "misc") {
     if (!game.settings.get(MODULE_ID, "countGear")) return 0;
-    return game.settings.get(MODULE_ID, "gearSlotCost");
+    baseCost = game.settings.get(MODULE_ID, "gearSlotCost");
+
+  } else {
+    // Unknown physical type — count as 1 so nothing slips through
+    baseCost = 1;
   }
 
-  // Anything else physical that we haven't classified — count as 1 by default
-  // so nothing sneaks through uncounted
-  return 1;
+  return baseCost * scaleMultiplier(item);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -100,9 +122,8 @@ function calcEncumbrance(actor) {
   for (const item of actor.items) {
     totalSlots += slotCostForItem(item);
   }
-  totalSlots = Math.round(totalSlots * 10) / 10; // round to 1 decimal place
+  totalSlots = Math.round(totalSlots * 10) / 10;
 
-  // Carry limit — per-character override wins, otherwise STR × multiplier
   const override = actor.getFlag(MODULE_ID, "carryLimitOverride");
   let carryLimit;
 
@@ -125,7 +146,7 @@ function calcEncumbrance(actor) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Inject the encumbrance bar into the actor sheet
+// Inject bar into actor sheet
 // ─────────────────────────────────────────────────────────────────
 function injectEncumbranceBar(app, html) {
   const actor = app.actor ?? app.document;
@@ -140,14 +161,22 @@ function injectEncumbranceBar(app, html) {
   const hasOverride = actor.getFlag(MODULE_ID, "carryLimitOverride") != null;
   const sourceLabel = hasOverride ? " (manual)" : " (from STR)";
 
-  // Build a small legend showing which categories are active
+  // Legend — show base costs and scale note
   const parts = [];
-  if (game.settings.get(MODULE_ID, "countWeapons")) parts.push("weapons: 1 slot");
-  if (game.settings.get(MODULE_ID, "countArmor"))   parts.push("armour: 1 slot");
-  if (game.settings.get(MODULE_ID, "countGear"))    parts.push(`gear: ${game.settings.get(MODULE_ID, "gearSlotCost")} slot`);
-  const legend = parts.length ? `<span class="enc-legend">${parts.join(" · ")}</span>` : "";
+  if (game.settings.get(MODULE_ID, "countWeapons"))
+    parts.push(`weapons: ${game.settings.get(MODULE_ID, "weaponSlotCost")} slot`);
+  if (game.settings.get(MODULE_ID, "countArmor"))
+    parts.push(`armour: ${game.settings.get(MODULE_ID, "armorSlotCost")} slot`);
+  if (game.settings.get(MODULE_ID, "countGear"))
+    parts.push(`gear: ${game.settings.get(MODULE_ID, "gearSlotCost")} slot`);
+  if (game.settings.get(MODULE_ID, "useScale")) {
+    const sm = [0,1,2,3,4].map(i => game.settings.get(MODULE_ID, `scaleMultiplier${i}`));
+    parts.push(`scale ×${sm[0]}/${sm[1]}/${sm[2]}/${sm[3]}/${sm[4]}`);
+  }
+  const legend = parts.length
+    ? `<span class="enc-legend">${parts.join(" · ")}</span>`
+    : "";
 
-  // Edit/clear buttons only visible to the GM
   const gmButtons = isGM ? `
     <a class="enc-edit" title="Set a manual carry limit (overrides STR)">✎</a>
     ${hasOverride ? `<a class="enc-clear" title="Clear override — use STR again">✕</a>` : ""}
@@ -169,12 +198,8 @@ function injectEncumbranceBar(app, html) {
   `;
 
   const targets = [
-    ".sheet-body",
-    ".tab.active",
-    ".tab[data-tab='main']",
-    ".tab[data-tab='inventory']",
-    "form.sheet",
-    "form"
+    ".sheet-body", ".tab.active", ".tab[data-tab='main']",
+    ".tab[data-tab='inventory']", "form.sheet", "form"
   ];
   let inserted = false;
   for (const sel of targets) {
@@ -183,7 +208,6 @@ function injectEncumbranceBar(app, html) {
   }
   if (!inserted) html.append(barHtml);
 
-  // Edit/clear handlers — GM only
   if (isGM) {
     html.find(".enc-edit").on("click", async () => {
       const current = actor.getFlag(MODULE_ID, "carryLimitOverride") ?? enc.max;
@@ -234,81 +258,108 @@ function rerenderActor(actorId) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Settings registration
+// Settings
 // ─────────────────────────────────────────────────────────────────
 Hooks.once("init", () => {
 
-  // ── What counts ──────────────────────────────────────────────
+  // ── What counts and base slot costs ──────────────────────────
+
   game.settings.register(MODULE_ID, "countWeapons", {
     name: "Count weapons",
-    hint: "Each weapon in the inventory counts as 1 slot.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    requiresReload: false
+    hint: "Weapons take up slots in the carry limit.",
+    scope: "world", config: true, type: Boolean, default: true
+  });
+
+  game.settings.register(MODULE_ID, "weaponSlotCost", {
+    name: "Weapon slot cost",
+    hint: "How many slots each weapon takes. Default 1. Set to 2 for heavier campaigns.",
+    scope: "world", config: true, type: Number, default: 1
   });
 
   game.settings.register(MODULE_ID, "countArmor", {
     name: "Count armour",
-    hint: "Each piece of armour in the inventory counts as 1 slot.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    requiresReload: false
+    hint: "Armour takes up slots in the carry limit.",
+    scope: "world", config: true, type: Boolean, default: true
+  });
+
+  game.settings.register(MODULE_ID, "armorSlotCost", {
+    name: "Armour slot cost",
+    hint: "How many slots each armour piece takes. Default 1. Set to 2 for bulky armour.",
+    scope: "world", config: true, type: Number, default: 1
   });
 
   game.settings.register(MODULE_ID, "countGear", {
     name: "Count gear / equipment",
-    hint: "Equipment and misc gear items count towards slots (at the fraction set below).",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    requiresReload: false
+    hint: "General equipment and misc gear takes up slots.",
+    scope: "world", config: true, type: Boolean, default: true
   });
 
   game.settings.register(MODULE_ID, "gearSlotCost", {
     name: "Gear slot cost",
-    hint: "How many slots each gear/equipment item uses. Default 0.5 means two gear items = 1 slot. Set to 1 to make gear count the same as weapons.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 0.5,
-    requiresReload: false
+    hint: "How many slots each gear item takes. Default 0.5 (two items = 1 slot).",
+    scope: "world", config: true, type: Number, default: 0.5
+  });
+
+  // ── Scale ─────────────────────────────────────────────────────
+
+  game.settings.register(MODULE_ID, "useScale", {
+    name: "Use item scale for slot cost",
+    hint: "When enabled, higher-scale items take more slots. Scale 0 (character) = base cost ×1. Scale 1 (speeder/walker) = ×2. Scale 2 (starfighter) = ×3. Scale 3 (capital ship) = ×4. Etc.",
+    scope: "world", config: true, type: Boolean, default: false
+  });
+
+  // ── Scale slot multipliers ───────────────────────────────────
+
+  game.settings.register(MODULE_ID, "scaleMultiplier0", {
+    name: "Scale 0 slot multiplier (character scale)",
+    hint: "How many times the base slot cost is multiplied for scale 0 items (normal character-scale gear). Default 1.",
+    scope: "world", config: true, type: Number, default: 1
+  });
+
+  game.settings.register(MODULE_ID, "scaleMultiplier1", {
+    name: "Scale 1 slot multiplier (speeder/walker scale)",
+    hint: "Slot multiplier for scale 1 items. Default 2 means a scale 1 weapon uses twice the slots of a scale 0 weapon.",
+    scope: "world", config: true, type: Number, default: 2
+  });
+
+  game.settings.register(MODULE_ID, "scaleMultiplier2", {
+    name: "Scale 2 slot multiplier (starfighter scale)",
+    hint: "Slot multiplier for scale 2 items. Default 4.",
+    scope: "world", config: true, type: Number, default: 4
+  });
+
+  game.settings.register(MODULE_ID, "scaleMultiplier3", {
+    name: "Scale 3 slot multiplier (capital ship scale)",
+    hint: "Slot multiplier for scale 3 items. Default 8.",
+    scope: "world", config: true, type: Number, default: 8
+  });
+
+  game.settings.register(MODULE_ID, "scaleMultiplier4", {
+    name: "Scale 4+ slot multiplier (death star scale)",
+    hint: "Slot multiplier for scale 4 and above items. Default 16.",
+    scope: "world", config: true, type: Number, default: 16
   });
 
   // ── Carry limit ───────────────────────────────────────────────
+
   game.settings.register(MODULE_ID, "strMultiplier", {
     name: "Slots per Strength die",
-    hint: "Carry limit = STR dice × this number. Default 5 means a character with 3D STR can carry 15 slots worth of gear.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 5,
-    requiresReload: false
+    hint: "Carry limit = STR dice × this number. Default 5 means 3D STR = 15 slots.",
+    scope: "world", config: true, type: Number, default: 5
   });
 
   game.settings.register(MODULE_ID, "defaultCarryLimit", {
     name: "Fallback carry limit (if STR not found)",
-    hint: "Used when the module cannot read a Strength attribute from the sheet.",
-    scope: "world",
-    config: true,
-    type: Number,
-    default: 10,
-    requiresReload: false
+    hint: "Used when the module cannot read Strength from the sheet.",
+    scope: "world", config: true, type: Number, default: 10
   });
 
   // ── Warnings ─────────────────────────────────────────────────
+
   game.settings.register(MODULE_ID, "showWarnings", {
     name: "Show encumbrance warnings",
-    hint: "Show a popup notification when a character exceeds their carry limit.",
-    scope: "world",
-    config: true,
-    type: Boolean,
-    default: true,
-    requiresReload: false
+    hint: "Show a popup when a character exceeds their carry limit.",
+    scope: "world", config: true, type: Boolean, default: true
   });
 
   console.log(`${MODULE_ID} | Initialised`);
