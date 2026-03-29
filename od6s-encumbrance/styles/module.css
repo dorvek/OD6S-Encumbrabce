@@ -70,3 +70,11 @@
 .enc-bar-fill.enc-over {
   background: linear-gradient(to right, #c02020, #7a0000);
 }
+
+.enc-legend {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  opacity: 0.55;
+  font-style: italic;
+}

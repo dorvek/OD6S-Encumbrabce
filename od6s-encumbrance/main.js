@@ -1,8 +1,10 @@
 /**
- * OD6S Encumbrance Tracker v1.2
+ * OD6S Encumbrance Tracker v1.3
  *
- * Each item in the inventory counts as 1 slot (no weight fields needed).
- * Carry limit defaults to STR dice × multiplier, overridable per character.
+ * - Weapons count as 1 slot (toggleable)
+ * - Armour counts as 1 slot (toggleable)
+ * - Gear/equipment counts as 0.5 slots (toggleable, and the half-slot value is configurable)
+ * - Carry limit = STR dice × multiplier, overridable per character
  */
 
 const MODULE_ID = "od6s-encumbrance";
@@ -31,7 +33,6 @@ function getStrengthDice(actor) {
 
   for (const key of ["str", "strength", "physique", "phy"]) {
     if (attrs[key] !== undefined) {
-      // OD6S stores the die code in .base (e.g. "3D+1")
       const val = attrs[key]?.base ?? attrs[key]?.value ?? attrs[key]?.total ?? attrs[key];
       const parsed = parseDiceCode(val);
       if (parsed > 0) return parsed;
@@ -51,38 +52,67 @@ function getStrengthDice(actor) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Item types that should NOT count as carried slots
-// (passive abilities, force powers, species traits, etc.)
+// Item type classification
+// OD6S item types: "weapon", "armor", "equipment" (gear),
+// plus passive types we always ignore.
 // ─────────────────────────────────────────────────────────────────
-const IGNORED_TYPES = new Set([
-  "ability", "advantage", "disadvantage", "special",
-  "specialability", "power", "forcepower", "force",
-  "skill", "trait", "feature", "species", "career"
+const ALWAYS_IGNORED = new Set([
+  "ability", "advantage", "disadvantage", "special", "specialability",
+  "power", "forcepower", "force", "skill", "trait", "feature",
+  "species", "career", "extranormal", "manifestation"
 ]);
 
+// Returns the slot cost for a single item based on current settings,
+// or 0 if the item should not be counted.
+function slotCostForItem(item) {
+  const type = (item.type ?? "").toLowerCase();
+
+  if (ALWAYS_IGNORED.has(type)) return 0;
+
+  // Weapons
+  if (type === "weapon" || type === "rangedweapon" || type === "meleeweapon") {
+    return game.settings.get(MODULE_ID, "countWeapons") ? 1 : 0;
+  }
+
+  // Armour
+  if (type === "armor" || type === "armour") {
+    return game.settings.get(MODULE_ID, "countArmor") ? 1 : 0;
+  }
+
+  // Gear / equipment — counts as a configurable fraction (default 0.5)
+  if (type === "equipment" || type === "gear" || type === "item" || type === "misc") {
+    if (!game.settings.get(MODULE_ID, "countGear")) return 0;
+    return game.settings.get(MODULE_ID, "gearSlotCost");
+  }
+
+  // Anything else physical that we haven't classified — count as 1 by default
+  // so nothing sneaks through uncounted
+  return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────
-// Core encumbrance calculation — counts items as slots, not weight
+// Core encumbrance calculation
 // ─────────────────────────────────────────────────────────────────
 function calcEncumbrance(actor) {
   if (!actor) return null;
 
   let totalSlots = 0;
   for (const item of actor.items) {
-    if (IGNORED_TYPES.has(item.type?.toLowerCase())) continue;
-    totalSlots += 1; // each physical item = 1 slot
+    totalSlots += slotCostForItem(item);
   }
+  totalSlots = Math.round(totalSlots * 10) / 10; // round to 1 decimal place
 
-  // ── Carry limit ───────────────────────────────────────────────
+  // Carry limit — per-character override wins, otherwise STR × multiplier
   const override = actor.getFlag(MODULE_ID, "carryLimitOverride");
   let carryLimit;
 
   if (override !== undefined && override !== null && override !== "") {
-    carryLimit = parseInt(override, 10);
+    carryLimit = parseFloat(override);
   } else {
     const strDice = getStrengthDice(actor);
     const multiplier = game.settings.get(MODULE_ID, "strMultiplier");
     carryLimit = strDice > 0
-      ? Math.round(strDice * multiplier)
+      ? Math.round(strDice * multiplier * 10) / 10
       : game.settings.get(MODULE_ID, "defaultCarryLimit");
   }
 
@@ -104,10 +134,24 @@ function injectEncumbranceBar(app, html) {
   const enc = calcEncumbrance(actor);
   if (!enc) return;
 
+  const isGM       = game.user.isGM;
   const overClass   = enc.over ? "enc-over" : "";
   const overText    = enc.over ? " ⚠ Over limit!" : "";
   const hasOverride = actor.getFlag(MODULE_ID, "carryLimitOverride") != null;
   const sourceLabel = hasOverride ? " (manual)" : " (from STR)";
+
+  // Build a small legend showing which categories are active
+  const parts = [];
+  if (game.settings.get(MODULE_ID, "countWeapons")) parts.push("weapons: 1 slot");
+  if (game.settings.get(MODULE_ID, "countArmor"))   parts.push("armour: 1 slot");
+  if (game.settings.get(MODULE_ID, "countGear"))    parts.push(`gear: ${game.settings.get(MODULE_ID, "gearSlotCost")} slot`);
+  const legend = parts.length ? `<span class="enc-legend">${parts.join(" · ")}</span>` : "";
+
+  // Edit/clear buttons only visible to the GM
+  const gmButtons = isGM ? `
+    <a class="enc-edit" title="Set a manual carry limit (overrides STR)">✎</a>
+    ${hasOverride ? `<a class="enc-clear" title="Clear override — use STR again">✕</a>` : ""}
+  ` : "";
 
   const barHtml = `
     <div class="enc-tracker ${overClass}" id="enc-tracker-${actor.id}">
@@ -115,12 +159,12 @@ function injectEncumbranceBar(app, html) {
         <span class="enc-text">
           Slots: <strong>${enc.current}</strong> / ${enc.max}${sourceLabel}${overText}
         </span>
-        <a class="enc-edit" title="Set a manual carry limit (overrides STR)">✎</a>
-        ${hasOverride ? `<a class="enc-clear" title="Clear override — use STR again">✕</a>` : ""}
+        ${gmButtons}
       </div>
       <div class="enc-bar-bg">
         <div class="enc-bar-fill ${overClass}" style="width:${enc.pct.toFixed(1)}%"></div>
       </div>
+      ${legend}
     </div>
   `;
 
@@ -139,31 +183,32 @@ function injectEncumbranceBar(app, html) {
   }
   if (!inserted) html.append(barHtml);
 
-  // ── Edit override ─────────────────────────────────────────────
-  html.find(".enc-edit").on("click", async () => {
-    const current = actor.getFlag(MODULE_ID, "carryLimitOverride") ?? enc.max;
-    const result = await Dialog.prompt({
-      title: "Set Carry Limit Override",
-      content: `
-        <p>Enter a fixed number of item slots for <strong>${actor.name}</strong>.</p>
-        <p style="font-size:0.85em;color:#888">Click ✕ on the sheet to go back to automatic (STR-based).</p>
-        <input type="number" id="enc-limit-input" value="${current}"
-               min="1" step="1" style="width:100%;margin-top:4px">
-      `,
-      callback: (html) => html.find("#enc-limit-input").val(),
-      rejectClose: false
+  // Edit/clear handlers — GM only
+  if (isGM) {
+    html.find(".enc-edit").on("click", async () => {
+      const current = actor.getFlag(MODULE_ID, "carryLimitOverride") ?? enc.max;
+      const result = await Dialog.prompt({
+        title: "Set Carry Limit Override",
+        content: `
+          <p>Enter a fixed slot limit for <strong>${actor.name}</strong>.</p>
+          <p style="font-size:0.85em;color:#888">Click ✕ on the sheet to go back to automatic (STR-based).</p>
+          <input type="number" id="enc-limit-input" value="${current}"
+                 min="1" step="0.5" style="width:100%;margin-top:4px">
+        `,
+        callback: (html) => html.find("#enc-limit-input").val(),
+        rejectClose: false
+      });
+      if (result !== null && result !== undefined && result !== "") {
+        await actor.setFlag(MODULE_ID, "carryLimitOverride", parseFloat(result));
+        app.render(false);
+      }
     });
-    if (result !== null && result !== undefined && result !== "") {
-      await actor.setFlag(MODULE_ID, "carryLimitOverride", parseInt(result, 10));
-      app.render(false);
-    }
-  });
 
-  // ── Clear override ────────────────────────────────────────────
-  html.find(".enc-clear").on("click", async () => {
-    await actor.unsetFlag(MODULE_ID, "carryLimitOverride");
-    app.render(false);
-  });
+    html.find(".enc-clear").on("click", async () => {
+      await actor.unsetFlag(MODULE_ID, "carryLimitOverride");
+      app.render(false);
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -189,13 +234,55 @@ function rerenderActor(actorId) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Hooks
+// Settings registration
 // ─────────────────────────────────────────────────────────────────
 Hooks.once("init", () => {
 
+  // ── What counts ──────────────────────────────────────────────
+  game.settings.register(MODULE_ID, "countWeapons", {
+    name: "Count weapons",
+    hint: "Each weapon in the inventory counts as 1 slot.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    requiresReload: false
+  });
+
+  game.settings.register(MODULE_ID, "countArmor", {
+    name: "Count armour",
+    hint: "Each piece of armour in the inventory counts as 1 slot.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    requiresReload: false
+  });
+
+  game.settings.register(MODULE_ID, "countGear", {
+    name: "Count gear / equipment",
+    hint: "Equipment and misc gear items count towards slots (at the fraction set below).",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    requiresReload: false
+  });
+
+  game.settings.register(MODULE_ID, "gearSlotCost", {
+    name: "Gear slot cost",
+    hint: "How many slots each gear/equipment item uses. Default 0.5 means two gear items = 1 slot. Set to 1 to make gear count the same as weapons.",
+    scope: "world",
+    config: true,
+    type: Number,
+    default: 0.5,
+    requiresReload: false
+  });
+
+  // ── Carry limit ───────────────────────────────────────────────
   game.settings.register(MODULE_ID, "strMultiplier", {
     name: "Slots per Strength die",
-    hint: "Carry limit = STR dice × this number. Default 5 means a character with 3D STR can carry 15 items. Pips count as fractions (3D+1 ≈ 3.33 dice → 17 slots).",
+    hint: "Carry limit = STR dice × this number. Default 5 means a character with 3D STR can carry 15 slots worth of gear.",
     scope: "world",
     config: true,
     type: Number,
@@ -213,6 +300,7 @@ Hooks.once("init", () => {
     requiresReload: false
   });
 
+  // ── Warnings ─────────────────────────────────────────────────
   game.settings.register(MODULE_ID, "showWarnings", {
     name: "Show encumbrance warnings",
     hint: "Show a popup notification when a character exceeds their carry limit.",
@@ -226,6 +314,9 @@ Hooks.once("init", () => {
   console.log(`${MODULE_ID} | Initialised`);
 });
 
+// ─────────────────────────────────────────────────────────────────
+// Hooks
+// ─────────────────────────────────────────────────────────────────
 Hooks.on("renderActorSheet", (app, html) => {
   injectEncumbranceBar(app, html);
 });
@@ -240,5 +331,3 @@ Hooks.on("deleteItem", (item) => {
   if (item.parent?.documentName !== "Actor") return;
   rerenderActor(item.parent.id);
 });
-
-// No need to watch updateItem — slot count doesn't depend on item fields
