@@ -83,7 +83,7 @@ function scaleMultiplier(item) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Slot cost for a single item
+// Slot cost for a single item entry (respects quantity setting)
 // ─────────────────────────────────────────────────────────────────
 function slotCostForItem(item) {
   const type = (item.type ?? "").toLowerCase();
@@ -91,25 +91,38 @@ function slotCostForItem(item) {
   if (ALWAYS_IGNORED.has(type)) return 0;
 
   let baseCost = 0;
+  let useQty = false; // whether quantity multiplies the slot cost for this type
 
   if (type === "weapon" || type === "rangedweapon" || type === "meleeweapon") {
     if (!game.settings.get(MODULE_ID, "countWeapons")) return 0;
     baseCost = game.settings.get(MODULE_ID, "weaponSlotCost");
+    useQty = game.settings.get(MODULE_ID, "weaponCountQty");
 
   } else if (type === "armor" || type === "armour") {
     if (!game.settings.get(MODULE_ID, "countArmor")) return 0;
     baseCost = game.settings.get(MODULE_ID, "armorSlotCost");
+    useQty = game.settings.get(MODULE_ID, "armorCountQty");
 
   } else if (type === "equipment" || type === "gear" || type === "item" || type === "misc") {
     if (!game.settings.get(MODULE_ID, "countGear")) return 0;
     baseCost = game.settings.get(MODULE_ID, "gearSlotCost");
+    useQty = game.settings.get(MODULE_ID, "gearCountQty");
 
   } else {
     // Unknown physical type — count as 1 so nothing slips through
     baseCost = 1;
+    useQty = false;
   }
 
-  return baseCost * scaleMultiplier(item);
+  // Per-item slot override via system.labels.Slot (set in item editor)
+  // If present and a valid number, it replaces the category base cost entirely.
+  const labelSlot = item.system?.labels?.Slot ?? item.system?.labels?.slot ?? "";
+  if (labelSlot !== "" && !isNaN(parseFloat(labelSlot))) {
+    baseCost = parseFloat(labelSlot);
+  }
+
+  const qty = useQty ? Math.max(1, parseInt(item.system?.quantity ?? item.system?.qty ?? 1)) : 1;
+  return baseCost * qty * scaleMultiplier(item);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -163,12 +176,18 @@ function injectEncumbranceBar(app, html) {
 
   // Legend — show base costs and scale note
   const parts = [];
-  if (game.settings.get(MODULE_ID, "countWeapons"))
-    parts.push(`weapons: ${game.settings.get(MODULE_ID, "weaponSlotCost")} slot`);
-  if (game.settings.get(MODULE_ID, "countArmor"))
-    parts.push(`armour: ${game.settings.get(MODULE_ID, "armorSlotCost")} slot`);
-  if (game.settings.get(MODULE_ID, "countGear"))
-    parts.push(`gear: ${game.settings.get(MODULE_ID, "gearSlotCost")} slot`);
+  if (game.settings.get(MODULE_ID, "countWeapons")) {
+    const qtyLabel = game.settings.get(MODULE_ID, "weaponCountQty") ? " ×qty" : "";
+    parts.push(`weapons: ${game.settings.get(MODULE_ID, "weaponSlotCost")} slot${qtyLabel}`);
+  }
+  if (game.settings.get(MODULE_ID, "countArmor")) {
+    const qtyLabel = game.settings.get(MODULE_ID, "armorCountQty") ? " ×qty" : "";
+    parts.push(`armour: ${game.settings.get(MODULE_ID, "armorSlotCost")} slot${qtyLabel}`);
+  }
+  if (game.settings.get(MODULE_ID, "countGear")) {
+    const qtyLabel = game.settings.get(MODULE_ID, "gearCountQty") ? " ×qty" : "";
+    parts.push(`gear: ${game.settings.get(MODULE_ID, "gearSlotCost")} slot${qtyLabel}`);
+  }
   if (game.settings.get(MODULE_ID, "useScale")) {
     const sm = [0,1,2,3,4].map(i => game.settings.get(MODULE_ID, `scaleMultiplier${i}`));
     parts.push(`scale ×${sm[0]}/${sm[1]}/${sm[2]}/${sm[3]}/${sm[4]}`);
@@ -276,6 +295,12 @@ Hooks.once("init", () => {
     scope: "world", config: true, type: Number, default: 1
   });
 
+  game.settings.register(MODULE_ID, "weaponCountQty", {
+    name: "Weapons: count by quantity",
+    hint: "If on, a stack of 3 weapons uses 3× the slot cost. If off, any stack of weapons counts as one entry regardless of quantity.",
+    scope: "world", config: true, type: Boolean, default: false
+  });
+
   game.settings.register(MODULE_ID, "countArmor", {
     name: "Count armour",
     hint: "Armour takes up slots in the carry limit.",
@@ -288,6 +313,12 @@ Hooks.once("init", () => {
     scope: "world", config: true, type: Number, default: 1
   });
 
+  game.settings.register(MODULE_ID, "armorCountQty", {
+    name: "Armour: count by quantity",
+    hint: "If on, a stack of 3 armour pieces uses 3× the slot cost. If off, any stack counts as one entry.",
+    scope: "world", config: true, type: Boolean, default: false
+  });
+
   game.settings.register(MODULE_ID, "countGear", {
     name: "Count gear / equipment",
     hint: "General equipment and misc gear takes up slots.",
@@ -298,6 +329,12 @@ Hooks.once("init", () => {
     name: "Gear slot cost",
     hint: "How many slots each gear item takes. Default 0.5 (two items = 1 slot).",
     scope: "world", config: true, type: Number, default: 0.5
+  });
+
+  game.settings.register(MODULE_ID, "gearCountQty", {
+    name: "Gear: count by quantity",
+    hint: "If on, 11 medpacks uses 11× the slot cost. If off, a stack of medpacks counts as one entry regardless of quantity.",
+    scope: "world", config: true, type: Boolean, default: true
   });
 
   // ── Scale ─────────────────────────────────────────────────────
